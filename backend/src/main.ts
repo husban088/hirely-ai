@@ -5,11 +5,31 @@ import { AppModule } from "./app.module";
 import * as express from "express";
 import { graphqlUploadExpress } from "graphql-upload";
 
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { cors: true });
+// FRONTEND_URL can hold one origin or several comma-separated ones, e.g.
+// "https://my-app.vercel.app,http://localhost:3000"  (no trailing slash needed)
+function getAllowedOrigins(): string[] {
+  const raw = process.env.FRONTEND_URL || "http://localhost:3000";
+  return raw
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
 
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  const allowedOrigins = getAllowedOrigins();
   app.enableCors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: (origin, callback) => {
+      // No Origin header (curl, server-to-server, same-origin) => allow.
+      if (!origin || allowedOrigins.includes(origin.replace(/\/+$/, ""))) {
+        return callback(null, true);
+      }
+      console.warn(
+        `[CORS] blocked origin: ${origin} | allowed: ${allowedOrigins.join(", ")}`,
+      );
+      return callback(null, false);
+    },
     credentials: true,
   });
 

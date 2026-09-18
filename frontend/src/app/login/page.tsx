@@ -61,9 +61,9 @@ export default function LoginPage() {
 
             <div className="relative z-10 flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gold-gradient">
-                <Sparkles className="h-4 w-4 text-white" />
+                <Sparkles className="h-4 w-4 text-[#ffffff]" />
               </div>
-              <span className="font-display text-lg font-bold tracking-tight text-white">
+              <span className="font-display text-lg font-bold tracking-tight text-[#ffffff]">
                 Hirely <span className="text-gold-light">AI</span>
               </span>
             </div>
@@ -72,16 +72,16 @@ export default function LoginPage() {
               <span className="mb-4 inline-block text-xs font-semibold uppercase tracking-[0.3em] text-gold-light">
                 Members Access
               </span>
-              <h2 className="font-display text-3xl font-semibold leading-tight text-white md:text-4xl">
+              <h2 className="font-display text-3xl font-semibold leading-tight text-[#ffffff] md:text-4xl">
                 Welcome back to a<br />
                 <em className="italic text-gold-light">smarter</em> job search.
               </h2>
-              <p className="mt-4 max-w-[28ch] text-sm leading-relaxed text-white/60">
+              <p className="mt-4 max-w-[28ch] text-sm leading-relaxed text-[#ffffff]/60">
                 Sign in to score, optimize and track your resumes with AI.
               </p>
             </div>
 
-            <div className="relative z-10 flex items-center gap-3 text-xs tracking-wide text-white/40">
+            <div className="relative z-10 flex items-center gap-3 text-xs tracking-wide text-[#ffffff]/40">
               <span className="h-px w-6 bg-gold-light/70" />
               Crafted for serious job seekers
             </div>

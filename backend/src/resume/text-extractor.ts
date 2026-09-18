@@ -1,8 +1,8 @@
 import * as mammoth from "mammoth";
 
-// Import the parser's inner file directly. The package's index.js contains a debug block that
-// tries to read a sample PDF from disk when it thinks it runs standalone — which happens once the
-// code is bundled for Vercel and causes "ENOENT ... test/data/05-versions-space.pdf".
+// IMPORTANT: import the inner file, NOT "pdf-parse" itself. The package's index.js runs a
+// "debug mode" check at load time that tries to read a local test PDF — this crashes on
+// serverless platforms like Vercel (ENOENT ./test/data/05-versions-space.pdf).
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const pdfParse: (
   buffer: Buffer,

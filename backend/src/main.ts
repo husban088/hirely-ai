@@ -5,32 +5,42 @@ import { AppModule } from "./app.module";
 import * as express from "express";
 import { graphqlUploadExpress } from "graphql-upload";
 
-// FRONTEND_URL can hold one origin or several comma-separated ones, e.g.
-// "https://my-app.vercel.app,http://localhost:3000"  (no trailing slash needed)
-function getAllowedOrigins(): string[] {
-  const raw = process.env.FRONTEND_URL || "http://localhost:3000";
-  return raw
+/**
+ * CORS allow-list:
+ *  - every origin in FRONTEND_URL (comma-separated, trailing slash ignored)
+ *  - localhost / 127.0.0.1 on any port (local development)
+ *  - any https://*.vercel.app origin (production + preview deployments of the frontend)
+ * Auth uses a Bearer token (not cookies), so allowing Vercel preview URLs is safe.
+ */
+function isOriginAllowed(origin?: string): boolean {
+  if (!origin) return true; // curl / server-to-server / same-origin requests
+  const o = origin.replace(/\/+$/, "");
+
+  const configured = (process.env.FRONTEND_URL || "")
     .split(",")
-    .map((o) => o.trim().replace(/\/+$/, ""))
+    .map((s) => s.trim().replace(/\/+$/, ""))
     .filter(Boolean);
+
+  if (configured.includes(o)) return true;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(o)) return true;
+  if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(o)) return true;
+  return false;
 }
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  const allowedOrigins = getAllowedOrigins();
   app.enableCors({
-    origin: (origin, callback) => {
-      // No Origin header (curl, server-to-server, same-origin) => allow.
-      if (!origin || allowedOrigins.includes(origin.replace(/\/+$/, ""))) {
-        return callback(null, true);
-      }
-      console.warn(
-        `[CORS] blocked origin: ${origin} | allowed: ${allowedOrigins.join(", ")}`,
-      );
-      return callback(null, false);
-    },
+    origin: (origin, callback) => callback(null, isOriginAllowed(origin)),
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "Apollo-Require-Preflight",
+    ],
     credentials: true,
+    maxAge: 86400,
   });
 
   app.use(
@@ -44,6 +54,19 @@ async function bootstrap() {
       whitelist: true,
       transform: true,
     }),
+  );
+
+  // Simple health check — open the backend URL in a browser to confirm it is alive.
+  const httpAdapter = app.getHttpAdapter();
+  httpAdapter.get("/", (_req: any, res: any) =>
+    res.json({
+      status: "ok",
+      service: "hirely-ai-backend",
+      graphql: "/graphql",
+    }),
+  );
+  httpAdapter.get("/health", (_req: any, res: any) =>
+    res.json({ status: "ok" }),
   );
 
   const port = process.env.PORT || 4000;

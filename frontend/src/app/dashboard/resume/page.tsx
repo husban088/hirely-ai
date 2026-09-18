@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { useDropzone, FileRejection } from "react-dropzone";
+import { useDropzone } from "react-dropzone";
 import { useMutation, useQuery } from "@apollo/client";
 import { motion, AnimatePresence } from "framer-motion";
 import toast from "react-hot-toast";
@@ -27,10 +27,9 @@ import {
 } from "@/lib/graphql/mutations";
 import { useRouter } from "next/navigation";
 import { getToken, clearSession } from "@/lib/auth";
+import { UPLOAD_URL } from "@/lib/apollo-client";
 
 const MARKETS = ["US", "Germany", "UK"];
-// Vercel Functions reject request bodies larger than 4.5MB, so keep uploads safely below that.
-const MAX_FILE_MB = 4;
 
 export default function ResumePage() {
   const router = useRouter();
@@ -66,10 +65,10 @@ export default function ResumePage() {
       const file = acceptedFiles[0];
       if (!file) return;
 
-      const token = getToken();
-      if (!token) {
-        toast.error("Please log in first.");
-        router.push("/login");
+      // Vercel serverless functions reject request bodies larger than ~4.5 MB.
+      const isLocalBackend = /localhost|127\.0\.0\.1/.test(UPLOAD_URL);
+      if (!isLocalBackend && file.size > 4 * 1024 * 1024) {
+        toast.error("File is too large. Please upload a PDF/DOCX under 4 MB.");
         return;
       }
 
@@ -79,25 +78,12 @@ export default function ResumePage() {
       formData.append("targetRole", targetRole);
       formData.append("targetMarket", targetMarket);
 
-      const uploadUrl =
-        process.env.NEXT_PUBLIC_UPLOAD_URL ||
-        "http://localhost:4000/api/resume/upload";
-
       try {
-        let res: Response;
-        try {
-          res = await fetch(uploadUrl, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-            body: formData,
-          });
-        } catch {
-          // fetch() itself failed => server not reachable / wrong URL / CORS
-          throw new Error(
-            "Cannot reach the server. Make sure the backend is running on port 4000 and NEXT_PUBLIC_UPLOAD_URL is correct.",
-          );
-        }
-
+        const res = await fetch(UPLOAD_URL, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${getToken()}` },
+          body: formData,
+        });
         if (res.status === 401) {
           // Token is stale/expired or was signed with an old secret — force a clean re-login
           // instead of surfacing the raw "invalid signature" error to the user.
@@ -106,21 +92,18 @@ export default function ResumePage() {
           router.push("/login");
           return;
         }
-
-        if (res.status === 413) {
-          throw new Error(
-            `File is too large. Please upload a file under ${MAX_FILE_MB}MB.`,
-          );
-        }
-
         if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          const msg = Array.isArray(body?.message)
-            ? body.message.join(", ")
-            : body?.message;
-          throw new Error(msg || `Upload failed (${res.status}).`);
+          let message = "Upload failed.";
+          try {
+            const body = await res.json();
+            message = Array.isArray(body?.message)
+              ? body.message.join(", ")
+              : body?.message || message;
+          } catch {
+            if (res.status === 413) message = "File is too large to upload.";
+          }
+          throw new Error(message);
         }
-
         const resume = await res.json();
         toast.success("Resume analyzed!");
         setActiveResumeId(resume.id);
@@ -134,25 +117,14 @@ export default function ResumePage() {
     [targetRole, targetMarket, refetch, router],
   );
 
-  const onDropRejected = useCallback((rejections: FileRejection[]) => {
-    const code = rejections[0]?.errors[0]?.code;
-    if (code === "file-too-large")
-      toast.error(`File is larger than ${MAX_FILE_MB}MB.`);
-    else if (code === "file-invalid-type")
-      toast.error("Only PDF or DOCX files are supported.");
-    else toast.error("That file could not be accepted.");
-  }, []);
-
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    onDropRejected,
     accept: {
       "application/pdf": [".pdf"],
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
         [".docx"],
     },
     maxFiles: 1,
-    maxSize: MAX_FILE_MB * 1024 * 1024,
   });
 
   async function handleOptimize() {
@@ -250,7 +222,7 @@ export default function ResumePage() {
                 {uploading ? "Analyzing..." : "Drop your resume here"}
               </p>
               <p className="mt-1 text-xs text-ivory/40">
-                PDF or DOCX, up to {MAX_FILE_MB}MB
+                PDF or DOCX, up to 10MB
               </p>
             </div>
           </Card>

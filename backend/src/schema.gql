@@ -1,0 +1,147 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type AuthPayload {
+  accessToken: String!
+  user: User!
+}
+
+input CoverLetterInput {
+  companyName: String!
+  jobDescription: String!
+  jobTitle: String!
+  resumeId: String!
+}
+
+input CreateJobInput {
+  companyLogoUrl: String
+  companyName: String!
+  jobTitle: String!
+  jobUrl: String
+  location: String
+  notes: String
+  status: JobStatus
+}
+
+"""
+A date-time string at UTC, such as 2019-12-03T09:54:33Z, compliant with the date-time format.
+"""
+scalar DateTime
+
+input ForgotPasswordInput {
+  email: String!
+}
+
+type JobApplication {
+  appliedDate: DateTime
+  companyLogoUrl: String
+  companyName: String!
+  id: ID!
+  jobTitle: String!
+  jobUrl: String
+  location: String
+  notes: String
+  resumeId: String
+  status: JobStatus!
+  userId: ID!
+}
+
+enum JobStatus {
+  APPLIED
+  INTERVIEW
+  OFFER
+  REJECTED
+  WISHLIST
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+type Mutation {
+  createJob(input: CreateJobInput!): JobApplication!
+  deleteAccount: Boolean!
+  deleteJob(id: String!): Boolean!
+  deleteResume(resumeId: String!): Boolean!
+  forgotPassword(input: ForgotPasswordInput!): SimpleMessage!
+  generateCoverLetter(input: CoverLetterInput!): String!
+  login(input: LoginInput!): AuthPayload!
+  optimizeResume(resumeId: String!): Resume!
+  register(input: RegisterInput!): AuthPayload!
+  resetPassword(input: ResetPasswordInput!): SimpleMessage!
+  updateJob(input: UpdateJobInput!): JobApplication!
+  updateProfile(input: UpdateProfileInput!): User!
+}
+
+type Query {
+  me: User!
+  myJobs: [JobApplication!]!
+  myResumes: [Resume!]!
+}
+
+input RegisterInput {
+  email: String!
+  fullName: String!
+  password: String!
+}
+
+input ResetPasswordInput {
+  newPassword: String!
+  token: String!
+}
+
+type Resume {
+  analysis: ResumeAnalysis
+  extractedText: String!
+  fileName: String!
+  fileUrl: String!
+  id: ID!
+  optimizedText: String
+  targetMarket: String!
+  targetRole: String!
+  userId: ID!
+}
+
+type ResumeAnalysis {
+  atsIssues: [String!]
+  keywordGaps: [String!]
+  score: Int
+  strengths: [String!]
+  summary: String
+  weaknesses: [String!]
+}
+
+type SimpleMessage {
+  message: String!
+  success: Boolean!
+}
+
+input UpdateJobInput {
+  companyLogoUrl: String
+  companyName: String
+  id: String!
+  jobTitle: String
+  jobUrl: String
+  location: String
+  notes: String
+  status: JobStatus
+}
+
+input UpdateProfileInput {
+  avatarUrl: String
+  fullName: String
+  targetMarket: String
+  targetRole: String
+}
+
+type User {
+  avatarUrl: String
+  createdAt: DateTime
+  email: String!
+  fullName: String!
+  id: ID!
+  targetMarket: String
+  targetRole: String
+}

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
+import { useQuery } from "@apollo/client";
 import {
   LayoutDashboard,
   FileText,
@@ -11,7 +12,8 @@ import {
   LogOut,
 } from "lucide-react";
 import { Logo } from "../ui/Logo";
-import { clearSession, getUser } from "@/lib/auth";
+import { clearSession, getUser, updateStoredUser } from "@/lib/auth";
+import { ME_QUERY } from "@/lib/graphql/queries";
 
 const links = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
@@ -23,7 +25,19 @@ const links = [
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const user = getUser();
+  const cachedUser = getUser();
+
+  // Always confirm the name/email against the server instead of trusting
+  // whatever was cached at signup — fixes the sidebar ever showing a
+  // generic "User" fallback, and keeps it accurate if the name is later
+  // changed on the Profile page. Falls back to the cached copy while this
+  // is still loading so nothing flashes empty.
+  const { data } = useQuery(ME_QUERY, { fetchPolicy: "cache-and-network" });
+  const user = data?.me || cachedUser;
+
+  if (data?.me) {
+    updateStoredUser(data.me);
+  }
 
   function handleLogout() {
     clearSession();

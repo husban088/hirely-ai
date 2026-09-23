@@ -41,6 +41,10 @@ export default function ProfilePage() {
   const [targetRole, setTargetRole] = useState("");
   const [targetMarket, setTargetMarket] = useState("US");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  // Logout has no server call to hang a loading state off of — this just
+  // marks the moment the button is clicked so its spinner shows while
+  // we clear the session and navigate away to /login.
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const [updateProfile, { loading: saving }] = useMutation(
     UPDATE_PROFILE_MUTATION,
@@ -71,6 +75,7 @@ export default function ProfilePage() {
   }
 
   function handleLogout() {
+    setLoggingOut(true);
     clearSession();
     router.push("/login");
   }
@@ -144,13 +149,19 @@ export default function ProfilePage() {
             )}
 
             <div className="mt-6 w-full space-y-2">
-              <Button variant="secondary" fullWidth onClick={handleLogout}>
+              <Button
+                variant="secondary"
+                fullWidth
+                onClick={handleLogout}
+                loading={loggingOut}
+              >
                 <LogOut className="h-4 w-4" /> Log out
               </Button>
               <Button
                 variant="danger"
                 fullWidth
                 onClick={() => setShowDeleteModal(true)}
+                disabled={loggingOut}
               >
                 <Trash2 className="h-4 w-4" /> Delete account
               </Button>

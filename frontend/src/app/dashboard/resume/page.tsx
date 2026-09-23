@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { useMutation, useQuery } from "@apollo/client";
 import { motion, AnimatePresence } from "framer-motion";
@@ -11,6 +11,7 @@ import {
   Wand2,
   Sparkles,
   Trash2,
+  Loader2,
   CheckCircle2,
   AlertTriangle,
   Mail,
@@ -19,6 +20,7 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { ScoreRing } from "@/components/dashboard/ScoreRing";
+import { UploadProgressRing } from "@/components/dashboard/UploadProgressRing";
 import { MY_RESUMES_QUERY } from "@/lib/graphql/queries";
 import {
   OPTIMIZE_RESUME_MUTATION,
@@ -30,13 +32,44 @@ import { getToken, clearSession } from "@/lib/auth";
 import { UPLOAD_URL } from "@/lib/apollo-client";
 
 const MARKETS = ["US", "Germany", "UK"];
+// Hard client-side ceiling: if the backend hasn't answered by now, cancel the
+// request ourselves instead of leaving the progress ring frozen forever.
+const UPLOAD_TIMEOUT_MS = 45000;
 
 export default function ResumePage() {
   const router = useRouter();
   const [targetRole, setTargetRole] = useState("Frontend Developer");
   const [targetMarket, setTargetMarket] = useState("US");
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopProgressTimer = useCallback(() => {
+    if (progressTimer.current) {
+      clearInterval(progressTimer.current);
+      progressTimer.current = null;
+    }
+  }, []);
+
+  // Simulated counter: climbs quickly at first, slows down, and holds at 95%
+  // until the real response comes back — then the caller jumps it to 100.
+  const startProgressTimer = useCallback(() => {
+    stopProgressTimer();
+    setProgress(0);
+    progressTimer.current = setInterval(() => {
+      setProgress((p) => {
+        if (p >= 95) return p;
+        const step = p < 60 ? 6 : p < 85 ? 3 : 1;
+        return Math.min(95, p + step);
+      });
+    }, 200);
+  }, [stopProgressTimer]);
+
+  useEffect(() => stopProgressTimer, [stopProgressTimer]);
   const [activeResumeId, setActiveResumeId] = useState<string | null>(null);
+  // Tracks which resume's delete request is currently in flight, so only
+  // that one row shows a spinner instead of blocking the whole list.
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [coverLetterOpen, setCoverLetterOpen] = useState(false);
   const [coverForm, setCoverForm] = useState({
     jobTitle: "",
@@ -73,16 +106,23 @@ export default function ResumePage() {
       }
 
       setUploading(true);
+      startProgressTimer();
       const formData = new FormData();
       formData.append("file", file);
       formData.append("targetRole", targetRole);
       formData.append("targetMarket", targetMarket);
+
+      // Belt-and-braces client-side timeout: aborts the fetch itself so the
+      // UI can never sit frozen at 95% no matter what the backend does.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
 
       try {
         const res = await fetch(UPLOAD_URL, {
           method: "POST",
           headers: { Authorization: `Bearer ${getToken()}` },
           body: formData,
+          signal: controller.signal,
         });
         if (res.status === 401) {
           // Token is stale/expired or was signed with an old secret — force a clean re-login
@@ -105,16 +145,37 @@ export default function ResumePage() {
           throw new Error(message);
         }
         const resume = await res.json();
+        // Snap the counter to 100% first, then reveal the result a beat
+        // later so the ring visibly completes before the report appears.
+        stopProgressTimer();
+        setProgress(100);
         toast.success("Resume analyzed!");
+        await new Promise((resolve) => setTimeout(resolve, 400));
         setActiveResumeId(resume.id);
         refetch();
       } catch (err: any) {
-        toast.error(err.message || "Upload failed.");
+        stopProgressTimer();
+        setProgress(0);
+        if (err?.name === "AbortError") {
+          toast.error(
+            "Analysis is taking too long. Please try again in a moment.",
+          );
+        } else {
+          toast.error(err.message || "Upload failed.");
+        }
       } finally {
+        clearTimeout(timeoutId);
         setUploading(false);
       }
     },
-    [targetRole, targetMarket, refetch, router],
+    [
+      targetRole,
+      targetMarket,
+      refetch,
+      router,
+      startProgressTimer,
+      stopProgressTimer,
+    ],
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -139,13 +200,17 @@ export default function ResumePage() {
   }
 
   async function handleDelete(id: string) {
+    if (deletingId) return; // a delete is already in flight, ignore extra clicks
+    setDeletingId(id);
     try {
       await deleteResume({ variables: { resumeId: id } });
       toast.success("Resume deleted.");
-      setActiveResumeId(null);
-      refetch();
+      setActiveResumeId((current) => (current === id ? null : current));
+      await refetch();
     } catch (err: any) {
-      toast.error(err.message);
+      toast.error(err.message || "Delete failed.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -237,44 +302,65 @@ export default function ResumePage() {
                   No resumes uploaded yet.
                 </p>
               )}
-              {resumes.map((r: any) => (
-                <button
-                  key={r.id}
-                  onClick={() => setActiveResumeId(r.id)}
-                  className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors ${
-                    active?.id === r.id
-                      ? "border-gold/50 bg-gold/5"
-                      : "border-white/10 hover:bg-white/5"
-                  }`}
-                >
-                  <span className="flex items-center gap-2 truncate">
-                    <FileText className="h-4 w-4 flex-shrink-0 text-gold" />
-                    <span className="truncate">{r.fileName}</span>
-                  </span>
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(r.id);
-                    }}
-                    className="ml-2 flex-shrink-0 text-ivory/30 hover:text-red-600"
+              {resumes.map((r: any) => {
+                const isDeleting = deletingId === r.id;
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => !isDeleting && setActiveResumeId(r.id)}
+                    disabled={isDeleting}
+                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm transition-colors ${
+                      active?.id === r.id
+                        ? "border-gold/50 bg-gold/5"
+                        : "border-white/10 hover:bg-white/5"
+                    } ${isDeleting ? "opacity-50" : ""}`}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </span>
-                </button>
-              ))}
+                    <span className="flex items-center gap-2 truncate">
+                      <FileText className="h-4 w-4 flex-shrink-0 text-gold" />
+                      <span className="truncate">
+                        {isDeleting ? "Deleting..." : r.fileName}
+                      </span>
+                    </span>
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!isDeleting) handleDelete(r.id);
+                      }}
+                      className={`ml-2 flex-shrink-0 text-ivory/30 ${
+                        isDeleting
+                          ? "cursor-not-allowed text-gold"
+                          : "hover:text-red-600"
+                      }`}
+                    >
+                      {isDeleting ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3.5 w-3.5" />
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </Card>
         </div>
 
         {/* Analysis column */}
         <div className="space-y-6">
-          {!active && (
+          {uploading && (
+            <Card className="flex h-64 flex-col items-center justify-center gap-3 text-center">
+              <UploadProgressRing progress={progress} />
+              <p className="text-sm text-ivory/50">Analyzing your resume...</p>
+            </Card>
+          )}
+
+          {!uploading && !active && (
             <Card className="flex h-64 items-center justify-center text-center text-ivory/40">
               Upload a resume to see your AI analysis here.
             </Card>
           )}
 
-          {active && (
+          {!uploading && active && (
             <AnimatePresence mode="wait">
               <motion.div
                 key={active.id}

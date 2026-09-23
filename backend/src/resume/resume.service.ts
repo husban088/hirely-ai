@@ -11,6 +11,21 @@ import { CloudinaryService } from "../cloudinary/cloudinary.service";
 import { OpenAiService } from "../openai/openai.service";
 import { extractTextFromBuffer } from "./text-extractor";
 
+const CLOUDINARY_TIMEOUT_MS = 20000;
+
+/** Races any promise against a timeout so a stalled network call can never hang forever. */
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 @Injectable()
 export class ResumeService {
   constructor(
@@ -41,33 +56,45 @@ export class ResumeService {
       );
     }
 
-    let uploaded: { url: string; publicId: string };
-    try {
-      uploaded = await this.cloudinaryService.uploadBuffer(file.buffer, {
-        folder: `hirely-ai/resumes/${userId}`,
-        resourceType: "raw",
-      });
-    } catch (err: any) {
-      console.error(
-        "[ResumeService] Cloudinary upload failed:",
-        err?.message || err,
-      );
-      throw new BadRequestException(
-        `File storage failed: ${err?.message || "unknown error"}`,
-      );
-    }
+    console.log(
+      "[ResumeService] Text extracted, starting upload + AI scoring in parallel...",
+    );
 
-    let analysis;
-    try {
-      analysis = await this.openAiService.scoreResume(
-        extractedText,
-        targetRole,
-        targetMarket,
-      );
-    } catch (err: any) {
-      console.error("[ResumeService] AI scoring failed:", err?.message || err);
-      throw new BadRequestException(err?.message || "AI analysis failed.");
-    }
+    // Cloudinary upload and Gemini scoring don't depend on each other —
+    // run them together instead of one after the other. Both are wrapped
+    // in a timeout so a stalled network call can never hang the request
+    // forever (this was the actual bug behind "stuck at 95%").
+    const [uploaded, analysis] = await Promise.all([
+      withTimeout(
+        this.cloudinaryService.uploadBuffer(file.buffer, {
+          folder: `hirely-ai/resumes/${userId}`,
+          resourceType: "raw",
+        }),
+        CLOUDINARY_TIMEOUT_MS,
+        "Cloudinary upload",
+      ).catch((err: any) => {
+        console.error(
+          "[ResumeService] Cloudinary upload failed:",
+          err?.message || err,
+        );
+        throw new BadRequestException(
+          `File storage failed: ${err?.message || "unknown error"}`,
+        );
+      }),
+      this.openAiService
+        .scoreResume(extractedText, targetRole, targetMarket)
+        .catch((err: any) => {
+          console.error(
+            "[ResumeService] AI scoring failed:",
+            err?.message || err,
+          );
+          throw new BadRequestException(err?.message || "AI analysis failed.");
+        }),
+    ]);
+
+    console.log(
+      "[ResumeService] Upload + AI scoring both done, saving resume...",
+    );
 
     const resume = new this.resumeModel({
       userId: new Types.ObjectId(userId),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQuery } from "@apollo/client";
 import {
   DragDropContext,
@@ -51,7 +51,13 @@ export default function JobsPage() {
     jobUrl: "",
   });
 
-  const jobs = data?.myJobs || [];
+  // Local mirror of the query data — lets us move a card to its new column
+  // the instant it's dropped instead of waiting for the mutation + refetch
+  // to come back (that round-trip was the "snaps back then jumps" glitch).
+  const [jobs, setJobs] = useState<any[]>([]);
+  useEffect(() => {
+    if (data?.myJobs) setJobs(data.myJobs);
+  }, [data]);
 
   async function handleDragEnd(result: DropResult) {
     if (!result.destination) return;
@@ -59,12 +65,20 @@ export default function JobsPage() {
     const jobId = result.draggableId;
     if (result.source.droppableId === newStatus) return;
 
+    const previousJobs = jobs;
+    // Move it instantly in local state — the card lands in the column you
+    // dropped it in right away, no flicker back to the source column.
+    setJobs((prev) =>
+      prev.map((j) => (j.id === jobId ? { ...j, status: newStatus } : j)),
+    );
+
     try {
       await updateJob({
         variables: { input: { id: jobId, status: newStatus } },
       });
-      refetch();
     } catch (err: any) {
+      // Server rejected it — put the card back where it was.
+      setJobs(previousJobs);
       toast.error(err.message || "Update failed.");
     }
   }
@@ -85,10 +99,12 @@ export default function JobsPage() {
   }
 
   async function handleDelete(id: string) {
+    const previousJobs = jobs;
+    setJobs((prev) => prev.filter((j) => j.id !== id));
     try {
       await deleteJob({ variables: { id } });
-      refetch();
     } catch (err: any) {
+      setJobs(previousJobs);
       toast.error(err.message);
     }
   }

@@ -28,8 +28,18 @@ import {
   GENERATE_COVER_LETTER_MUTATION,
 } from "@/lib/graphql/mutations";
 import { useRouter } from "next/navigation";
-import { getToken, clearSession } from "@/lib/auth";
+import { getToken, getUser, clearSession } from "@/lib/auth";
 import { UPLOAD_URL } from "@/lib/apollo-client";
+import {
+  PersonalDetailsForm,
+  PersonalDetails,
+  emptyPersonalDetails,
+  isPersonalDetailsComplete,
+  getMissingFields,
+} from "@/components/dashboard/PersonalDetailsForm";
+import { CoverLetterDocument } from "@/components/dashboard/CoverLetterDocument";
+import { ResumeDocument } from "@/components/dashboard/ResumeDocument";
+import { DocumentActions } from "@/components/dashboard/DocumentActions";
 
 const MARKETS = ["US", "Germany", "UK"];
 // Hard client-side ceiling: if the backend hasn't answered by now, cancel the
@@ -77,6 +87,45 @@ export default function ResumePage() {
     jobDescription: "",
   });
   const [coverLetterResult, setCoverLetterResult] = useState("");
+
+  // Shared "required before you can export anything" contact details, used
+  // by both the Cover Letter and the Optimized Resume documents.
+  const [details, setDetails] = useState<PersonalDetails>(emptyPersonalDetails);
+  const detailsComplete = isPersonalDetailsComplete(details);
+  const coverLetterDocRef = useRef<HTMLDivElement>(null);
+  const resumeDocRef = useRef<HTMLDivElement>(null);
+  // Used to jump the page to the "Your Details" card or the cover-letter
+  // form so the user actually sees what needs attention, instead of just a
+  // toast that scrolls off screen.
+  const detailsCardRef = useRef<HTMLDivElement>(null);
+  const coverLetterSectionRef = useRef<HTMLDivElement>(null);
+
+  function scrollToDetails() {
+    detailsCardRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }
+
+  function focusMissingDetails() {
+    const missing = getMissingFields(details);
+    toast.error(
+      missing.length
+        ? `These fields are empty: ${missing.join(", ")}. Please fill them in the 'Your Details' card first.`
+        : "Please fill in your details in the 'Your Details' card above first.",
+    );
+    scrollToDetails();
+  }
+
+  useEffect(() => {
+    const user = getUser();
+    if (!user) return;
+    setDetails((d) => ({
+      ...d,
+      fullName: d.fullName || user.fullName || "",
+      email: d.email || user.email || "",
+    }));
+  }, []);
 
   const { data, refetch } = useQuery(MY_RESUMES_QUERY, {
     fetchPolicy: "cache-and-network",
@@ -190,6 +239,10 @@ export default function ResumePage() {
 
   async function handleOptimize() {
     if (!active) return;
+    if (!detailsComplete) {
+      focusMissingDetails();
+      return;
+    }
     try {
       await optimizeResume({ variables: { resumeId: active.id } });
       toast.success("Resume optimized for " + active.targetMarket + "!");
@@ -217,6 +270,10 @@ export default function ResumePage() {
   async function handleGenerateCoverLetter(e: React.FormEvent) {
     e.preventDefault();
     if (!active) return;
+    if (!detailsComplete) {
+      focusMissingDetails();
+      return;
+    }
     try {
       const { data } = await generateCoverLetter({
         variables: { input: { resumeId: active.id, ...coverForm } },
@@ -290,6 +347,20 @@ export default function ResumePage() {
                 PDF or DOCX, up to 10MB
               </p>
             </div>
+          </Card>
+
+          <Card ref={detailsCardRef}>
+            <h4 className="mb-1 flex items-center gap-2 text-sm font-semibold text-ivory/70">
+              Your Details
+              {detailsComplete && (
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              )}
+            </h4>
+            <p className="mb-3 text-xs text-ivory/40">
+              All of this (except the photo) must be filled in before you can
+              generate the Cover Letter or Optimized Resume as an image/PDF.
+            </p>
+            <PersonalDetailsForm value={details} onChange={setDetails} />
           </Card>
 
           <Card>
@@ -385,7 +456,22 @@ export default function ResumePage() {
                       </Button>
                       <Button
                         variant="secondary"
-                        onClick={() => setCoverLetterOpen(!coverLetterOpen)}
+                        onClick={() => {
+                          const opening = !coverLetterOpen;
+                          setCoverLetterOpen(opening);
+                          if (opening) {
+                            // Let the height-expand animation start first,
+                            // then scroll the freshly revealed form into view.
+                            setTimeout(
+                              () =>
+                                coverLetterSectionRef.current?.scrollIntoView({
+                                  behavior: "smooth",
+                                  block: "start",
+                                }),
+                              120,
+                            );
+                          }
+                        }}
                       >
                         <Mail className="h-4 w-4" /> Cover Letter
                       </Button>
@@ -461,15 +547,44 @@ export default function ResumePage() {
                       <Sparkles className="h-4 w-4" /> Optimized Resume (
                       {active.targetMarket})
                     </h4>
-                    <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-gold-gradient p-4 text-xs leading-relaxed text-zinc-100">
-                      {active.optimizedText}
-                    </pre>
+                    {detailsComplete ? (
+                      <div className="space-y-4">
+                        <div className="overflow-x-auto rounded-xl border border-white/10 py-6">
+                          <ResumeDocument
+                            ref={resumeDocRef}
+                            details={details}
+                            targetRole={active.targetRole}
+                            targetMarket={active.targetMarket}
+                            jobTitle={coverForm.jobTitle}
+                            companyName={coverForm.companyName}
+                            resumeText={active.optimizedText}
+                          />
+                        </div>
+                        <DocumentActions
+                          targetRef={resumeDocRef}
+                          defaultFileName={`${details.fullName} - Resume`}
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={scrollToDetails}
+                        className="w-full rounded-xl border border-dashed border-gold/40 p-4 text-left text-sm text-ivory/50 transition-colors hover:border-gold/70 hover:text-ivory/70"
+                      >
+                        Fill in the &quot;Your Details&quot; card above to view
+                        and download the Image/PDF
+                        {getMissingFields(details).length > 0 &&
+                          ` (remaining: ${getMissingFields(details).join(", ")})`}
+                        .
+                      </button>
+                    )}
                   </Card>
                 )}
 
                 <AnimatePresence>
                   {coverLetterOpen && (
                     <motion.div
+                      ref={coverLetterSectionRef}
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: "auto" }}
                       exit={{ opacity: 0, height: 0 }}
@@ -528,9 +643,22 @@ export default function ResumePage() {
                           </Button>
                         </form>
                         {coverLetterResult && (
-                          <pre className="mt-4 max-h-80 overflow-auto whitespace-pre-wrap rounded-xl bg-gold-gradient p-4 text-xs leading-relaxed text-zinc-100">
-                            {coverLetterResult}
-                          </pre>
+                          <div className="mt-4 space-y-4">
+                            <div className="overflow-x-auto rounded-xl border border-white/10 py-6">
+                              <CoverLetterDocument
+                                ref={coverLetterDocRef}
+                                details={details}
+                                jobTitle={coverForm.jobTitle}
+                                companyName={coverForm.companyName}
+                                targetMarket={active?.targetMarket}
+                                letterText={coverLetterResult}
+                              />
+                            </div>
+                            <DocumentActions
+                              targetRef={coverLetterDocRef}
+                              defaultFileName={`${details.fullName} - Cover Letter`}
+                            />
+                          </div>
                         )}
                       </Card>
                     </motion.div>
